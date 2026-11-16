@@ -1,0 +1,42 @@
+#    __  __ _        _____ _                
+#   |  \/  (_)_ __  |_   _(_)_ __ ___   ___ 
+#   | |\/| | | '__|   | | | | '_ ` _ \ / _ \
+#   | |  | | | |      | | | | | | | | |  __/
+#   |_|  |_|_|_|      |_| |_|_| |_| |_|\___|
+#                                           
+#   Project: Mir Time | Author: Ars3nBar
+
+# Главный переключатель связки с плагином MirTimePunish:
+# true  - отправлять детекты напрямую во вкладку [MT-AC] в меню /reports
+# false - автономный режим (писать алерты только в чат модерации)
+link-mirtime-punish: true
+
+prefix: "&#0055ff&l[MT-AC] &8» "
+
+checks:
+  reach:
+    enabled: true
+    max-distance: 3.9
+    vl-to-report: 4
+  killaura:
+    enabled: true
+    max-angle: 115.0
+    vl-to-report: 4
+  autoclicker:
+    enabled: true
+    max-cps: 19
+    vl-to-report: 3
+  fly:
+    enabled: true
+    max-air-ticks: 24
+    vl-to-report: 4
+  speed:
+    enabled: true
+    max-horizontal-speed: 0.78
+    vl-to-report: 5
+  jesus:
+    enabled: true
+    vl-to-report: 4
+  nofall:
+    enabled: true
+    vl-to-report: 3
