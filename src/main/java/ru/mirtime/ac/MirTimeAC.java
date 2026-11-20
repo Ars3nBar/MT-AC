@@ -5,7 +5,7 @@
  *   | |  | | | |      | | | | | | | | |  __/
  *   |_|  |_|_|_|      |_| |_|_| |_| |_|\___|
  *                                           
- *   Project: Mir Time | Author: Ars3nBar
+ *   Project: Mir Time | Author: Ars3nBar | MT-AC v3.0 HARDCORE
  */
 package ru.mirtime.ac;
 
@@ -16,19 +16,27 @@ import org.bukkit.block.Block;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
+import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
+import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
+import org.bukkit.util.BoundingBox;
 import org.bukkit.util.Vector;
 
 import java.util.*;
@@ -38,55 +46,79 @@ import java.util.regex.Pattern;
 public class MirTimeAC extends JavaPlugin implements CommandExecutor, Listener {
 
     private final Map<String, Integer> violations = new HashMap<>();
+    private final Map<UUID, Integer> totalVl = new HashMap<>();
     private final Map<String, Long> lastReportTime = new HashMap<>();
     private final Map<UUID, Integer> airTicks = new HashMap<>();
     private final Map<UUID, Integer> cpsCounter = new HashMap<>();
+    private final Map<UUID, Long> lastHitTime = new HashMap<>();
+    private final Map<UUID, UUID> lastHitTarget = new HashMap<>();
+    private final Map<UUID, Long> lastBreakTime = new HashMap<>();
+    private final Map<UUID, Location> lastSafeLoc = new HashMap<>();
+    private final Map<UUID, Integer> packetsPerSec = new HashMap<>();
+    private NamespacedKey mtItemKey;
 
     @Override
     public void onEnable() {
         saveDefaultConfig();
+        mtItemKey = new NamespacedKey("mirtimeitems", "mt_item_id");
         if (getCommand("mtac") != null) getCommand("mtac").setExecutor(this);
         Bukkit.getPluginManager().registerEvents(this, this);
 
+        // Проверка CPS и Timer каждую секунду
         new BukkitRunnable() {
             @Override
             public void run() {
-                int maxCps = getConfig().getInt("checks.autoclicker.max-cps", 19);
-                boolean enabled = getConfig().getBoolean("checks.autoclicker.enabled", true);
+                int maxCps = getConfig().getInt("checks.autoclicker.max-cps", 18);
                 for (Map.Entry<UUID, Integer> entry : cpsCounter.entrySet()) {
                     Player p = Bukkit.getPlayer(entry.getKey());
-                    if (p != null && enabled && !isExempt(p) && entry.getValue() > maxCps) {
-                        flag(p, "AutoClicker", "CPS: " + entry.getValue(), "checks.autoclicker.vl-to-report");
+                    if (p != null && !isExempt(p) && entry.getValue() > maxCps) {
+                        flag(p, "AutoClicker", "CPS: " + entry.getValue(), 2, false);
                     }
                 }
                 cpsCounter.clear();
+
+                for (Map.Entry<UUID, Integer> entry : packetsPerSec.entrySet()) {
+                    Player p = Bukkit.getPlayer(entry.getKey());
+                    if (p != null && !isExempt(p) && entry.getValue() > 26) {
+                        flag(p, "Timer", "Пакеты: " + entry.getValue() + "/с", 3, true);
+                    }
+                }
+                packetsPerSec.clear();
             }
         }.runTaskTimer(this, 20L, 20L);
 
+        // Постепенный спад VL каждые 15 секунд
         new BukkitRunnable() {
             @Override
             public void run() {
                 violations.replaceAll((k, v) -> Math.max(0, v - 1));
+                totalVl.replaceAll((k, v) -> Math.max(0, v - 1));
             }
-        }.runTaskTimer(this, 200L, 200L);
+        }.runTaskTimer(this, 300L, 300L);
 
         Bukkit.getConsoleSender().sendMessage(color("&#0055ff   __  __ _        _____ _                "));
         Bukkit.getConsoleSender().sendMessage(color("&#0055ff  |  \\/  (_)_ __  |_   _(_)_ __ ___   ___ "));
         Bukkit.getConsoleSender().sendMessage(color("&#00E5FF  | |\\/| | | '__|   | | | | '_ ` _ \\ / _ \\"));
         Bukkit.getConsoleSender().sendMessage(color("&#00E5FF  | |  | | | |      | | | | | | | | |  __/"));
         Bukkit.getConsoleSender().sendMessage(color("&#00FF66  |_|  |_|_|_|      |_| |_|_| |_| |_|\\___|"));
-        Bukkit.getConsoleSender().sendMessage(color("&#00E5FF  MT-AC v1.0.0 успешно запущен!"));
+        Bukkit.getConsoleSender().sendMessage(color("&#FF2A55  MT-AC v3.0 HARDCORE (3D HitBox AABB + MirTimePunish Sync) запущен!"));
     }
 
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
-        if (args.length > 0 && List.of(args).get(0).equalsIgnoreCase("reload")) {
+        if (args.length > 0 && args[0].equalsIgnoreCase("reload")) {
             reloadConfig();
-            sender.sendMessage(color(getConfig().getString("prefix") + "&#00FF66Конфиг MT-AC успешно перезагружен!"));
+            sender.sendMessage(color(getConfig().getString("prefix", "&#0055ff&l[MT-AC] &8» ") + "&#00FF66Конфиг MT-AC v3.0 перезагружен!"));
             return true;
         }
-        sender.sendMessage(color(getConfig().getString("prefix") + "&fАнтичит активен. Перезагрузка: &#00FF66/mtac reload"));
+        sender.sendMessage(color(getConfig().getString("prefix", "&#0055ff&l[MT-AC] &8» ") + "&fMT-AC v3.0 HARDCORE активен. Перезагрузка: &#00FF66/mtac reload"));
         return true;
+    }
+
+    private String getMtItem(ItemStack is) {
+        if (is == null || !is.hasItemMeta()) return "";
+        String val = is.getItemMeta().getPersistentDataContainer().get(mtItemKey, PersistentDataType.STRING);
+        return val != null ? val : "";
     }
 
     private boolean isExempt(Player p) {
@@ -105,45 +137,82 @@ public class MirTimeAC extends JavaPlugin implements CommandExecutor, Listener {
         }
     }
 
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    // ЖЁСТКИЙ БОЕВОЙ МОДУЛЬ: 3D HitBox AABB + Reach + MultiAura + Criticals
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onCombat(EntityDamageByEntityEvent e) {
-        if (!(e.getDamager() instanceof Player p)) return;
+        if (!(e.getDamager() instanceof Player p) || !(e.getEntity() instanceof LivingEntity target)) return;
         if (isExempt(p)) return;
 
-        Location eye = p.getEyeLocation();
-        Location targetLoc = e.getEntity().getLocation().add(0, e.getEntity().getHeight() / 2.0, 0);
-        double dist = eye.distance(targetLoc);
+        long now = System.currentTimeMillis();
+        UUID id = p.getUniqueId();
 
-        if (getConfig().getBoolean("checks.reach.enabled", true)) {
-            double maxDist = getConfig().getDouble("checks.reach.max-distance", 3.9);
-            if (p.isSprinting()) maxDist += 0.35;
-            if (dist > maxDist) {
-                flag(p, "Reach", String.format(Locale.US, "%.2f блоков", dist), "checks.reach.vl-to-report");
-            }
+        // 1. MultiAura (удары по разным целям быстрее 60 мс)
+        UUID prevTarget = lastHitTarget.get(id);
+        long prevTime = lastHitTime.getOrDefault(id, 0L);
+        if (prevTarget != null && !prevTarget.equals(target.getUniqueId()) && (now - prevTime) < 60L) {
+            e.setCancelled(true);
+            flag(p, "MultiAura", "Смена цели за " + (now - prevTime) + "мс", 4, false);
+            return;
+        }
+        lastHitTarget.put(id, target.getUniqueId());
+        lastHitTime.put(id, now);
+
+        // Расчёт точного 3D хитбокса с компенсацией пинга
+        double pingBonus = Math.min(0.45, p.getPing() * 0.0022);
+        Location eye = p.getEyeLocation();
+        Vector dir = eye.getDirection().normalize();
+        BoundingBox box = target.getBoundingBox().expand(0.28 + pingBonus);
+
+        // 2. Reach (расстояние от глаз до ближайшей точки 3D хитбокса)
+        double maxReach = getConfig().getDouble("checks.reach.max-distance", 3.25) + pingBonus;
+        if (p.isSprinting()) maxReach += 0.25;
+
+        double closestX = Math.max(box.getMinX(), Math.min(eye.getX(), box.getMaxX()));
+        double closestY = Math.max(box.getMinY(), Math.min(eye.getY(), box.getMaxY()));
+        double closestZ = Math.max(box.getMinZ(), Math.min(eye.getZ(), box.getMaxZ()));
+        double exactDist = eye.toVector().distance(new Vector(closestX, closestY, closestZ));
+
+        if (exactDist > maxReach) {
+            e.setCancelled(true);
+            flag(p, "Reach", String.format(Locale.US, "%.2f / %.2f бл.", exactDist, maxReach), 3, false);
+            return;
         }
 
-        if (getConfig().getBoolean("checks.killaura.enabled", true) && dist > 1.3) {
-            Vector toTarget = targetLoc.toVector().subtract(eye.toVector()).normalize();
-            Vector look = eye.getDirection().normalize();
-            double angle = Math.toDegrees(look.angle(toTarget));
-            double maxAngle = getConfig().getDouble("checks.killaura.max-angle", 115.0);
-            if (angle > maxAngle) {
-                flag(p, "KillAura", String.format(Locale.US, "Угол %.0f°", angle), "checks.killaura.vl-to-report");
+        // 3. HitBox / KillAura (проверка пересечения луча взгляда с 3D коробкой цели)
+        if (exactDist > 0.9 && box.rayTrace(eye.toVector(), dir, maxReach + 0.6) == null) {
+            Vector toCenter = target.getBoundingBox().getCenter().subtract(eye.toVector()).normalize();
+            double angle = Math.toDegrees(dir.angle(toCenter));
+            e.setCancelled(true);
+            flag(p, "HitBox/KillAura", String.format(Locale.US, "Мимо хитбокса (угол %.0f°)", angle), 3, false);
+            return;
+        }
+
+        // 4. Packet Criticals (крит без падения и не в воде/на лестнице)
+        if (p.getFallDistance() > 0.0f && p.getFallDistance() < 0.08f && !p.isInWater() && !p.isClimbing()) {
+            Block under = p.getLocation().subtract(0, 0.1, 0).getBlock();
+            if (!under.getType().isAir()) {
+                e.setCancelled(true);
+                flag(p, "Criticals", "Пакетный крит на земле", 2, false);
             }
         }
     }
 
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    // ЖЁСТКИЙ МОДУЛЬ ДВИЖЕНИЯ + ОТКАТ (Setback) + ЗАЩИТА MirTimeItems
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onMove(PlayerMoveEvent e) {
         Player p = e.getPlayer();
+        UUID id = p.getUniqueId();
+        packetsPerSec.put(id, packetsPerSec.getOrDefault(id, 0) + 1);
+
         if (isExempt(p)) {
-            airTicks.remove(p.getUniqueId());
+            airTicks.remove(id);
+            lastSafeLoc.put(id, e.getTo());
             return;
         }
 
         Location from = e.getFrom();
         Location to = e.getTo();
-        if (from.getWorld() != to.getWorld()) return;
+        if (to == null || from.getWorld() != to.getWorld()) return;
 
         double dx = to.getX() - from.getX();
         double dz = to.getZ() - from.getZ();
@@ -152,48 +221,91 @@ public class MirTimeAC extends JavaPlugin implements CommandExecutor, Listener {
 
         Block below = to.clone().subtract(0, 0.3, 0).getBlock();
         boolean inAir = below.getType().isAir() && !p.isClimbing() && !p.isInWater() && !p.isInLava();
+        if (!inAir && dy == 0) lastSafeLoc.put(id, from.clone());
 
-        if (getConfig().getBoolean("checks.fly.enabled", true)) {
-            if (inAir && dy >= -0.05 && !p.hasPotionEffect(PotionEffectType.LEVITATION) && !p.hasPotionEffect(PotionEffectType.SLOW_FALLING)) {
-                int ticks = airTicks.getOrDefault(p.getUniqueId(), 0) + 1;
-                airTicks.put(p.getUniqueId(), ticks);
-                if (ticks >= getConfig().getInt("checks.fly.max-air-ticks", 24)) {
-                    flag(p, "Fly", "В воздухе " + ticks + " тиков", "checks.fly.vl-to-report");
-                    airTicks.put(p.getUniqueId(), 0);
+        // 1. Fly / Hover
+        if (!p.hasPotionEffect(PotionEffectType.LEVITATION) && !p.hasPotionEffect(PotionEffectType.SLOW_FALLING) && p.getNoDamageTicks() <= 0) {
+            if (inAir && dy >= -0.04) {
+                int ticks = airTicks.getOrDefault(id, 0) + 1;
+                airTicks.put(id, ticks);
+                if (ticks >= getConfig().getInt("checks.fly.max-air-ticks", 22)) {
+                    flag(p, "Fly", "Зависание в воздухе (" + ticks + " тиков)", 3, true);
+                    airTicks.put(id, 0);
                 }
             } else {
-                airTicks.put(p.getUniqueId(), 0);
+                airTicks.put(id, 0);
             }
         }
 
-        if (getConfig().getBoolean("checks.speed.enabled", true) && horiz > 0.1) {
-            double maxSpd = getConfig().getDouble("checks.speed.max-horizontal-speed", 0.78);
+        // 2. SpeedHack (с учётом Ботинок Гермеса и Талисмана Скорости из MirTimeItems)
+        if (horiz > 0.12 && p.getNoDamageTicks() <= 0) {
+            double maxSpd = getConfig().getDouble("checks.speed.max-horizontal-speed", 0.76);
             if (p.hasPotionEffect(PotionEffectType.SPEED)) {
-                int amp = p.getPotionEffect(PotionEffectType.SPEED).getAmplifier() + 1;
-                maxSpd += amp * 0.16;
+                maxSpd += (p.getPotionEffect(PotionEffectType.SPEED).getAmplifier() + 1) * 0.18;
             }
-            if (below.getType().name().contains("ICE") || below.getType().name().contains("SLIME")) maxSpd += 0.35;
-            if (p.getNoDamageTicks() > 0) maxSpd += 0.45;
+            if ("hermes_boots".equals(getMtItem(p.getInventory().getBoots()))) maxSpd += 0.25;
+            if ("talisman_speed".equals(getMtItem(p.getInventory().getItemInOffHand()))) maxSpd += 0.25;
+            if (below.getType().name().contains("ICE") || below.getType().name().contains("SLIME")) maxSpd += 0.38;
 
-            if (horiz > maxSpd && dy >= -0.4) {
-                flag(p, "SpeedHack", String.format(Locale.US, "Скорость %.2f", horiz), "checks.speed.vl-to-report");
+            if (horiz > maxSpd && dy >= -0.35) {
+                flag(p, "SpeedHack", String.format(Locale.US, "Скорость %.2f (макс %.2f)", horiz, maxSpd), 2, true);
             }
         }
 
-        if (getConfig().getBoolean("checks.jesus.enabled", true)) {
-            Block feet = to.getBlock();
-            Block under = to.clone().subtract(0, 0.15, 0).getBlock();
-            if (feet.getType().isAir() && (under.getType() == Material.WATER || under.getType() == Material.LAVA) && horiz > 0.28 && Math.abs(dy) < 0.02) {
-                flag(p, "Jesus", "Ходьба по жидкости", "checks.jesus.vl-to-report");
+        // 3. Jesus (ходьба по воде/лаве)
+        Block feet = to.getBlock();
+        Block under = to.clone().subtract(0, 0.15, 0).getBlock();
+        if (feet.getType().isAir() && (under.getType() == Material.WATER || under.getType() == Material.LAVA) && horiz > 0.29 && Math.abs(dy) < 0.02) {
+            flag(p, "Jesus", "Ходьба по поверхности жидкости", 3, true);
+        }
+    }
+    // InventoryMove + FastBreak + Scaffold + NoFall
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onInvClick(InventoryClickEvent e) {
+        if (e.getWhoClicked() instanceof Player p && !isExempt(p)) {
+            if (p.isSprinting() || p.getVelocity().lengthSquared() > 0.08) {
+                e.setCancelled(true);
+                flag(p, "InventoryMove", "Клик в инвентаре на бегу", 2, false);
             }
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onBlockBreak(BlockBreakEvent e) {
+        Player p = e.getPlayer();
+        if (isExempt(p) || p.hasPotionEffect(PotionEffectType.HASTE)) return;
+        String toolId = getMtItem(p.getInventory().getItemInMainHand());
+        if (toolId.equals("drill_pickaxe") || toolId.equals("magnet_pickaxe") || toolId.equals("farmer_hoe")) return;
+
+        Material m = e.getBlock().getType();
+        if (m == Material.OBSIDIAN || m == Material.ANCIENT_DEBRIS) {
+            long now = System.currentTimeMillis();
+            long diff = now - lastBreakTime.getOrDefault(p.getUniqueId(), 0L);
+            lastBreakTime.put(p.getUniqueId(), now);
+            if (diff < 850L) {
+                e.setCancelled(true);
+                flag(p, "FastBreak", "Добыча " + m.name() + " за " + diff + "мс", 4, false);
+            }
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onBlockPlace(BlockPlaceEvent e) {
+        Player p = e.getPlayer();
+        if (isExempt(p)) return;
+        Block placed = e.getBlockPlaced();
+        if (placed.getY() < p.getLocation().getY() && p.isSprinting() && p.getLocation().getPitch() < 45.0f) {
+            e.setCancelled(true);
+            flag(p, "Scaffold", "Застройка под себя без взгляда вниз", 3, false);
         }
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onFall(EntityDamageEvent e) {
         if (e.getEntity() instanceof Player p && e.getCause() == EntityDamageEvent.DamageCause.FALL) {
-            if (!isExempt(p) && getConfig().getBoolean("checks.nofall.enabled", true) && p.getFallDistance() > 5.0 && e.getFinalDamage() <= 0.1) {
-                flag(p, "NoFall", "Падение без урона", "checks.nofall.vl-to-report");
+            if (isExempt(p) || "hermes_boots".equals(getMtItem(p.getInventory().getBoots()))) return;
+            if (p.getFallDistance() > 5.5 && e.getFinalDamage() <= 0.1) {
+                flag(p, "NoFall", "Падение с " + (int) p.getFallDistance() + "м без урона", 3, false);
             }
         }
     }
@@ -203,34 +315,62 @@ public class MirTimeAC extends JavaPlugin implements CommandExecutor, Listener {
         UUID id = e.getPlayer().getUniqueId();
         airTicks.remove(id);
         cpsCounter.remove(id);
+        lastSafeLoc.remove(id);
+        packetsPerSec.remove(id);
     }
 
-    private void flag(Player p, String checkName, String details, String thresholdPath) {
-        String key = p.getUniqueId() + ":" + checkName;
-        int vl = violations.getOrDefault(key, 0) + 1;
+    // СИНХРОНИЗАЦИЯ С MirTimePunish (/acreport + АВТО-БАН)
+    private void flag(Player p, String checkName, String details, int weight, boolean setback) {
+        UUID id = p.getUniqueId();
+        if (setback && lastSafeLoc.containsKey(id)) {
+            p.teleport(lastSafeLoc.get(id));
+        }
+
+        String key = id + ":" + checkName;
+        int vl = violations.getOrDefault(key, 0) + weight;
         violations.put(key, vl);
 
-        int needed = getConfig().getInt(thresholdPath, 4);
+        int sumVl = totalVl.getOrDefault(id, 0) + weight;
+        totalVl.put(id, sumVl);
+
+        // Авто-бан через MirTimePunish при грубом читерстве (sumVl >= 16)
+        int autoBanVl = getConfig().getInt("auto-ban-vl", 16);
+        if (sumVl >= autoBanVl) {
+            totalVl.remove(id);
+            violations.remove(key);
+            String banCmd = getConfig().getString("ban-command", "ban %player% 14d [MT-AC] Использование читов (%check%)")
+                    .replace("%player%", p.getName())
+                    .replace("%check%", checkName);
+            Bukkit.broadcastMessage(color(getConfig().getString("prefix", "&#0055ff&l[MT-AC] &8» ") + "&#FF2A55&lИгрок &f" + p.getName() + " &#FF2A55&lзаблокирован античитом за &e" + checkName + "&f!"));
+            Bukkit.dispatchCommand(Bukkit.getConsoleSender(), banCmd);
+            return;
+        }
+
+        int needed = getConfig().getInt("vl-to-report", 4);
         if (vl < needed) return;
         violations.put(key, 0);
 
         long now = System.currentTimeMillis();
-        if (now - lastReportTime.getOrDefault(key, 0L) < 15_000L) return;
+        if (now - lastReportTime.getOrDefault(key, 0L) < 10_000L) return;
         lastReportTime.put(key, now);
 
-        boolean linkPunish = getConfig().getBoolean("link-mirtime-punish", true);
-        if (linkPunish && Bukkit.getPluginManager().isPluginEnabled("MirTimePunish")) {
+        // Передача репорта в MirTimePunish
+        if (Bukkit.getPluginManager().isPluginEnabled("MirTimePunish")) {
             Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "acreport " + p.getName() + " " + checkName + " (" + details + ")");
-        } else {
-            String prefix = getConfig().getString("prefix", "&#0055ff&l[MT-AC] &8» ");
-            TextComponent msg = new TextComponent(color(prefix + "&c" + p.getName() + " &fподозревается в &#00E5FF" + checkName + " &8(&7" + details + "&8) "));
-            TextComponent btn = new TextComponent(color("&#00FF66&l[СЛЕДИТЬ]"));
-            btn.setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/tp " + p.getName()));
-            for (Player staff : Bukkit.getOnlinePlayers()) {
-                if (staff.hasPermission("mtac.alerts")) {
-                    staff.spigot().sendMessage(msg, btn);
-                    staff.playSound(staff.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, 0.8f, 1.5f);
-                }
+        }
+
+        // Интерактивный алерт модераторам в чат
+        String prefix = getConfig().getString("prefix", "&#0055ff&l[MT-AC] &8» ");
+        TextComponent msg = new TextComponent(color(prefix + "&c" + p.getName() + " &fподозревается в &#00E5FF" + checkName + " &8(&7" + details + " &8| &eVL: " + sumVl + "&8) "));
+        TextComponent btnTp = new TextComponent(color("&#00FF66&l[СЛЕДИТЬ] "));
+        btnTp.setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/tp " + p.getName()));
+        TextComponent btnCheck = new TextComponent(color("&#FF2A55&l[ПРОВЕРКА]"));
+        btnCheck.setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/check " + p.getName()));
+
+        for (Player staff : Bukkit.getOnlinePlayers()) {
+            if (staff.hasPermission("mtac.alerts")) {
+                staff.spigot().sendMessage(msg, btnTp, btnCheck);
+                staff.playSound(staff.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, 0.8f, 1.5f);
             }
         }
     }
